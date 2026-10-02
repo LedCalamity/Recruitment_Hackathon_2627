@@ -70,9 +70,9 @@ class Driver(Node):
 
         """testing done here"""
         self.declare_parameter('look_ahead',1.0)
-        self.declare_parameter('max_speed', 3.85)
-        self.declare_parameter('turn_slowdown', 0.4)
-        self.declare_parameter('min_speed', 2.9)
+        self.declare_parameter('max_speed',7)
+        self.declare_parameter('turn_slowdown', 3.5)
+        self.declare_parameter('min_speed', 3.5)
 
         self.look_ahead = self.get_parameter('look_ahead').value
         self.max_speed = self.get_parameter('max_speed').value
@@ -83,7 +83,8 @@ class Driver(Node):
         # the rules allow you to use - so use it.
         self.position = None      # (x, y) in the map frame
         self.yaw = 0.0            # [rad]
-        self.speed = 0.0          # [m/s]
+        self.speed = 0.0
+        self.last_steering = 0.0          # [m/s]
 
         self.drive_pub = self.create_publisher(
             AckermannDriveStamped, self.get_parameter('drive_topic').value, 10)
@@ -115,6 +116,7 @@ class Driver(Node):
     def scan_callback(self, scan):
         ranges, angles = self.preprocess(scan)
         steering, speed = self.plan(ranges, angles)
+        self.last_steering = steering
         self.publish(steering, speed)
 
         self._marker_divisor = (self._marker_divisor + 1) % 10
@@ -275,13 +277,178 @@ class Driver(Node):
                 speed = max(self.min_speed,speed)
                 return (steering,speed)
         return (0.0,0.0)
+    def plan_pure_pursuit_v2(self, ranges, angles):
 
+        if self.position is None:
+            return (0.0, 0.0)
+
+        car_pos = np.array(self.position)
+        wheel_base = 0.3302
+
+        # ==================================================
+        # 1. Find nearest centerline point
+        # ==================================================
+
+        distances = np.linalg.norm(
+            self.path - car_pos,
+            axis=1
+        )
+
+        near_idx = np.argmin(distances)
+
+        # ==================================================
+        # 2. Adaptive lookahead
+        #
+        # Smaller than before:
+        # better corner tracking, less corner cutting
+        # ==================================================
+
+        look_ahead = np.clip(
+            0.70 + 0.12 * self.speed,
+            0.79,
+            1.55
+        )
+
+        # ==================================================
+        # 3. Vehicle coordinate transform
+        # ==================================================
+
+        c = np.cos(self.yaw)
+        s = np.sin(self.yaw)
+
+        target_x = None
+        target_y = None
+
+        # ==================================================
+        # 4. Find lookahead point
+        # ==================================================
+
+        for i in range(1, len(self.path)):
+
+            idx = (near_idx + i) % len(self.path)
+
+            dx, dy = self.path[idx] - car_pos
+
+            x = c * dx + s * dy
+            y = -s * dx + c * dy
+
+            distance = np.hypot(x, y)
+
+            if x > 0.0 and distance >= look_ahead:
+                target_x = x
+                target_y = y
+                break
+
+        if target_x is None:
+            return (0.0, 0.0)
+
+        # ==================================================
+        # 5. Pure Pursuit
+        # ==================================================
+
+        ld2 = (
+            target_x * target_x
+            +
+            target_y * target_y
+        )
+
+        raw_steering = np.arctan2(
+            2.0 * wheel_base * target_y,
+            ld2
+        )
+
+        raw_steering = np.clip(
+            raw_steering,
+            -0.34,
+            0.34
+        )
+
+        # ==================================================
+        # 6. Steering RATE limiter
+        #
+        # Unlike low-pass filter:
+        # still reacts quickly in corners,
+        # but prevents sudden steering jumps.
+        # ==================================================
+
+        max_change = 0.066
+
+        steering_change = (
+            raw_steering - self.last_steering
+        )
+
+        steering_change = np.clip(
+            steering_change,
+            -max_change,
+            max_change
+        )
+
+        steering = (
+            self.last_steering
+            +
+            steering_change
+        )
+
+        steering = np.clip(
+            steering,
+            -0.34,
+            0.34
+        )
+
+        self.last_steering = steering
+
+        # ==================================================
+        # 7. Speed according to corner severity
+        # ==================================================
+
+        turn_ratio = min(
+            abs(raw_steering) / 0.34,
+            1.0
+        )
+
+        # straight ≈ 4.5
+        # hard corner ≈ 2.2
+        speed = (
+            self.max_speed 
+            - 
+            self.min_speed * turn_ratio
+        )
+        speed = max(
+            self.min_speed,
+            speed
+        )
+        # ==================================================
+        # 8. LiDAR emergency protection
+        # ==================================================
+
+        front_mask = np.abs(angles) < np.deg2rad(20.0)
+
+        front_ranges = ranges[front_mask]
+
+        valid_front = front_ranges[
+            front_ranges > 0.05
+        ]
+
+        if len(valid_front) > 0:
+
+            front_distance = np.min(valid_front)
+
+            if front_distance < 0.55:
+                speed = 0.0
+
+            elif front_distance < 0.9:
+                speed = min(speed, 1.2)
+
+            elif front_distance < 1.3:
+                speed = min(speed, 2.2)
+
+        return (steering, speed)
     
     def plan(self, ranges, angles):
         """ver1: plan_ttw()
             ver2: plan_ftg() good
             ver3: plan_pure_persuit()"""
-        return self.plan_pure_persuit(ranges,angles)
+        return self.plan_pure_pursuit_v2(ranges,angles)
 
 
     # ------------------------------------------------------------------
