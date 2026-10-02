@@ -65,6 +65,20 @@ class Driver(Node):
         self.crawl_speed = self.get_parameter('crawl_speed').value
         self.max_range = self.get_parameter('max_range').value
 
+        """ver3"""
+        self.path = np.loadtxt('/hackathon/maps/icra26_centerline.csv',delimiter=",",comments="#")
+
+        """testing done here"""
+        self.declare_parameter('look_ahead',1.0)
+        self.declare_parameter('max_speed', 3.85)
+        self.declare_parameter('turn_slowdown', 0.4)
+        self.declare_parameter('min_speed', 2.9)
+
+        self.look_ahead = self.get_parameter('look_ahead').value
+        self.max_speed = self.get_parameter('max_speed').value
+        self.turn_slowdown = self.get_parameter('turn_slowdown').value
+        self.min_speed = self.get_parameter('min_speed').value
+
         # Latest known pose and speed. Ground truth from the simulator, which
         # the rules allow you to use - so use it.
         self.position = None      # (x, y) in the map frame
@@ -124,27 +138,151 @@ class Driver(Node):
     # ==================================================================
     # THIS IS THE PART YOU WRITE.
     # ==================================================================
+    def plan_ttw(self, ranges, angles):
+        """ver1: wall following below"""
+        def beam(target_angle):
+            idx=np.argmin(np.abs(angles-target_angle))
+            return ranges[idx]
+        b1 = beam(np.deg2rad(-90.0))
+        b2 = beam(np.deg2rad(-45.0))  #obtain the distance from wall
+        if(b1<0.05 or b2<0.05):
+            return (0.0,0.0)
+        theta = np.deg2rad(45.0) #angle bet b1&b2
+        alpha = np.arctan2(b2*np.cos(theta)-b1,
+                            b2*np.sin(theta)) #calc angle with wall,if - ,will closer
+        perp_dis = b1*np.cos(alpha) #perpendicular dis with wall
+        look_ahead = 0.8
+        fut_dis = perp_dis + look_ahead*np.sin(alpha)
+        want_dis = 0.8 #keep 0.8m to wall
+        err_dis = want_dis-fut_dis # - then right, + then left
+        kp = 0.7
+        steering = kp*err_dis
+        steering = np.clip(steering,-0.34,+0.34)
+        speed = self.crawl_speed
+        return (steering, speed)
+
+
+
+    def plan_ftg(self, ranges, angles):
+        """ver2: follow the gap  : 27s/lap can improve"""
+        tmprange = ranges.copy()
+        
+        restriction = np.deg2rad(70.0)
+        res_mask = np.abs(angles) <= restriction
+        tmprange[~res_mask] = 0.0  #only consider front, here -70~70
+        
+        #find valid idx, which is in restrction area but not too close 
+        valid_idx = np.flatnonzero(res_mask & (tmprange>=0.05)) 
+        if(len(valid_idx)==0):
+            return (0.0,0.0)
+        
+        nearest_idx = valid_idx[np.argmin(tmprange[valid_idx])]
+        nearest_dis = tmprange[nearest_idx] #nearest obstacle
+        
+        # disparity extension
+        tmprange2 = tmprange.copy()
+        fov_idx = np.flatnonzero(res_mask)
+        angle_step = abs(angles[1] - angles[0])
+        car_half = 0.31/2.0
+        protect_width = car_half + 0.16
+        disparity_thresh = 0.5 # the threshold we consider it to be edge of obst
+        for i in range(fov_idx[0],fov_idx[-1]):
+            r0,r1 = tmprange2[i],tmprange2[i+1]
+            if(r0<0.05 or r1<0.05):
+                continue
+            if(abs(r1-r0) <= disparity_thresh): #we find edge of obst
+                continue
+            nearer_dis = min(r0,r1)
+            extend_angle = np.arctan2(protect_width,nearer_dis) 
+            extend_ct = int(np.ceil(extend_angle/angle_step)) #obtain protect angle&its ct
+            if(r0<r1): #left side obst, lidar from i to i+1+extend_ct
+                stop = min(fov_idx[-1]+1,i+1+extend_ct)
+                tmprange[i+1:stop] = np.minimum(tmprange[i+1:stop],nearer_dis)
+            else: #right side obst, i+1-ct to i+1
+                start = max(fov_idx[0],i+1-extend_ct)
+                tmprange[start:i+1] = np.minimum(tmprange[start:i+1],nearer_dis)
+        
+        #to delete all possible range in bubble(not accessible) of closest obst
+        bubble_radius = 0.35
+        bubble_angle = np.arctan2(bubble_radius, max(nearest_dis,0.05))
+        bubble_mask = np.abs(angles-angles[nearest_idx]) <= bubble_angle
+        tmprange[bubble_mask] = 0.0 
+        
+        # get if accesible as a list to check for gaps
+        min_clear = 0.8
+        free = res_mask & (tmprange >= min_clear)
+        
+        padded = np.pad(free.astype(np.int8),(1,1))
+        changes = np.diff(padded)  #calculate change to see if gap, 0->1 start gap
+        gap_start = np.flatnonzero(changes == 1)
+        gap_end = np.flatnonzero(changes == -1)-1 #get gaps
+        if(len(gap_start) == 0):
+            return (0.0,0.0)
+        
+        gap_length = gap_end - gap_start +1
+        maxgap = np.argmax(gap_length)
+        maxstart,maxend = gap_start[maxgap],gap_end[maxgap] #get data of max gap
+        
+        #get the range in the gap, find peak, and select available dir near peak for mid
+        gap_range = tmprange[maxstart:maxend +1]
+        peak = np.max(gap_range)
+        peak_mask = gap_range >= 0.9 * peak
+        peak_padded = np.pad(peak_mask.astype(np.int8),(1,1))
+        peak_changes = np.diff(peak_padded)
+        peak_start = np.flatnonzero(peak_changes == 1)
+        peak_end = np.flatnonzero(peak_changes == -1)-1 #get high clearance area same as get gaps
+        peak_length = peak_end - peak_start +1
+        maxpeak = np.max(peak_length)
+        #now we choose from longest segments of clearance
+        candidates = np.flatnonzero(peak_length == maxpeak)
+        candidate_center = (peak_start[candidates]+peak_end[candidates])//2
+        gap_center = len(gap_range) / 2.0
+        best_candidate = np.argmin(np.abs(candidate_center-gap_center))
+        target_idx = maxstart + candidate_center[best_candidate]
+        
+        
+        steering = angles[target_idx]
+        steering = np.clip(steering,-0.34,0.34)
+        
+        speed = self.crawl_speed*(3.0 - 0.6 * (abs(steering)/0.34)) #stable 3.0
+        speed = max(2.20,speed)
+        
+        return (steering,speed)
+
+    def plan_pure_persuit(self, ranges, angles):
+        """ver3: pure pure persuit  delta = arctan(2Ly_L/L_d^2) 22.184/lap,shaky but can improve"""
+        if(self.position is None):
+            return (0.0,0.0)
+        look_ahead = self.look_ahead
+        wheel_base = 0.3302
+
+        car_pos = np.array(self.position) #get pos of car
+        pos_2_dis = np.linalg.norm(self.path-car_pos,axis = 1) #get the array of dis to points
+        near_pt = np.argmin(pos_2_dis) #get nearest_point
+
+        c = np.cos(self.yaw)
+        s = np.sin(self.yaw)
+
+        for i in range(1,len(self.path)):
+            idx = (near_pt + i)%len(self.path)  #get idx of lookahead by iteration
+            dx,dy = self.path[idx] - car_pos
+            x = c*dx + s*dy
+            y = -s*dx + c*dy #convert to car local
+            if(x>0 and x*x+y*y>=look_ahead*look_ahead): #L_d>=lookahead
+                steering = np.arctan2(2*wheel_base*y , (x*x+y*y))
+                steering = np.clip(steering,-0.34,0.34)
+                speed = self.crawl_speed*(self.max_speed - self.turn_slowdown * (abs(steering)/0.34))
+                speed = max(self.min_speed,speed)
+                return (steering,speed)
+        return (0.0,0.0)
+
+    
     def plan(self, ranges, angles):
-        """Decide what the car should do, given the latest scan.
+        """ver1: plan_ttw()
+            ver2: plan_ftg() good
+            ver3: plan_pure_persuit()"""
+        return self.plan_pure_persuit(ranges,angles)
 
-        Returns `(steering, speed)`: a steering angle in radians, and a speed
-        in m/s. Unlike Track 2, the speed is a genuine request - the simulator
-        runs the controller that achieves it - so you can think in the units
-        your algorithm naturally produces.
-
-        Right now it returns "straight ahead, slowly", which is not driving:
-        it ignores `ranges` entirely, so the car will hold its heading off the
-        grid and put itself into the first wall it meets. Replace the whole
-        method.
-
-        You have more to work with than the scan. `self.position`, `self.yaw`
-        and `self.speed` are ground truth from /ego_racecar/odom and are yours
-        to use, the occupancy grid is published on /map, and nothing stops you
-        subscribing to more topics, loading a line you computed offline, or
-        running a policy you trained. See docs/04-algorithms.md for the
-        approaches and what each one needs.
-        """
-        return 0.0, self.crawl_speed
 
     # ------------------------------------------------------------------
     # Output
