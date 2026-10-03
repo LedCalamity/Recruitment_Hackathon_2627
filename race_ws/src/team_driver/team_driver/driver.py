@@ -69,7 +69,7 @@ class Driver(Node):
         self.path = np.loadtxt('/hackathon/maps/icra26_centerline.csv',delimiter=",",comments="#")
 
         """testing done here"""
-        self.declare_parameter('look_ahead',1.0)
+        self.declare_parameter('look_ahead',0.7)
         self.declare_parameter('max_speed',7)
         self.declare_parameter('turn_slowdown', 3.5)
         self.declare_parameter('min_speed', 3.5)
@@ -252,10 +252,10 @@ class Driver(Node):
         return (steering,speed)
 
     def plan_pure_persuit(self, ranges, angles):
-        """ver3: pure pure persuit  delta = arctan(2Ly_L/L_d^2) 22.184/lap,shaky but can improve"""
+        """ver3: pure pure persuit  delta = arctan(2Ly_L/L_d^2) 15/lap,shaky but can improve"""
         if(self.position is None):
             return (0.0,0.0)
-        look_ahead = self.look_ahead
+        look_ahead = np.clip(self.look_ahead + 0.12 * self.speed, 0.79, 1.55)
         wheel_base = 0.3302
 
         car_pos = np.array(self.position) #get pos of car
@@ -277,6 +277,7 @@ class Driver(Node):
                 speed = max(self.min_speed,speed)
                 return (steering,speed)
         return (0.0,0.0)
+    
     def plan_pure_pursuit_v2(self, ranges, angles):
 
         if self.position is None:
@@ -447,8 +448,9 @@ class Driver(Node):
     def plan(self, ranges, angles):
         """ver1: plan_ttw()
             ver2: plan_ftg() good
-            ver3: plan_pure_persuit()"""
-        return self.plan_pure_pursuit_v2(ranges,angles)
+            ver3: plan_pure_persuit()
+            ver4: plan_pure_pursuit_v2() for better stability"""
+        return self.plan_pure_persuit(ranges,angles)
 
 
     # ------------------------------------------------------------------
