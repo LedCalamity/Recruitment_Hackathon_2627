@@ -69,7 +69,7 @@ class Driver(Node):
         self.path = np.loadtxt('/hackathon/maps/icra26_centerline.csv',delimiter=",",comments="#")
 
         """testing done here"""
-        self.declare_parameter('look_ahead',0.7)
+        self.declare_parameter('look_ahead',0.9)
         self.declare_parameter('max_speed',7)
         self.declare_parameter('turn_slowdown', 3.5)
         self.declare_parameter('min_speed', 3.5)
