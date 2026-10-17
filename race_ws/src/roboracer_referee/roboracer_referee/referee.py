@@ -15,6 +15,7 @@ laptop; see docs/05-evaluation.md.
 
 from __future__ import annotations
 
+import csv
 import json
 import math
 import os
@@ -132,6 +133,12 @@ class Referee(Node):
         self.last_sim_time: Optional[float] = None
         self.last_odom_time: Optional[float] = None
         self.last_position: Optional[tuple] = None
+        self.last_speed: Optional[float] = None
+        self.last_yaw: Optional[float] = None
+        self.last_steering: Optional[float] = None
+        self.last_command_speed: Optional[float] = None
+        self.collision_csv_path = os.path.join(
+            self.output_dir, f"{''.join(c if c.isalnum() or c in '-_' else '_' for c in self.team)}__{self.run_id}__collisions.csv")
         self.driver_seen = False
         self.reset_requested_at: Optional[float] = None
         self.phase_started_wall = time.monotonic()
@@ -207,17 +214,42 @@ class Referee(Node):
 
     def _on_drive(self, _msg: AckermannDriveStamped) -> None:
         self.driver_seen = True
+        self.last_steering = float(_msg.drive.steering_angle)
+        self.last_command_speed = float(_msg.drive.speed)
 
     def _on_collision(self, msg: Bool) -> None:
         try:
             if not msg.data or self.phase != Phase.RACING or self.sim_time is None:
                 return
             if self.session.register_collision(self.sim_time):
+                x, y = self.last_position if self.last_position is not None else (None, None)
+                record = {
+                    "collision_number": self.session.collision_events,
+                    "sim_time_s": self.sim_time,
+                    "x_m": x,
+                    "y_m": y,
+                    "speed_mps": self.last_speed,
+                    "yaw_rad": self.last_yaw,
+                    "steering_cmd_rad": self.last_steering,
+                    "speed_cmd_mps": self.last_command_speed,
+                }
                 self.get_logger().warn(
                     f"COLLISION {self.session.collision_events}/"
                     f"{self.session.rules.max_collisions} "
+                    f"x={x}, y={y}, speed={self.last_speed}, yaw={self.last_yaw} "
                     f"(+{self.session.rules.collision_penalty_s:.0f}s on this lap)"
                 )
+                # Debug-only CSV. Official collision detection/scoring stays unchanged.
+                try:
+                    os.makedirs(self.output_dir, exist_ok=True)
+                    exists = os.path.exists(self.collision_csv_path)
+                    with open(self.collision_csv_path, "a", newline="") as f:
+                        writer = csv.DictWriter(f, fieldnames=list(record))
+                        if not exists or os.path.getsize(self.collision_csv_path) == 0:
+                            writer.writeheader()
+                        writer.writerow(record)
+                except OSError as exc:
+                    self.get_logger().error(f"Unable to save collision CSV: {exc}")
         except Exception as exc:                            # noqa: BLE001
             self._guard("collision callback", exc)
 
@@ -225,9 +257,13 @@ class Referee(Node):
         try:
             self.last_odom_time = time.monotonic()
             self.last_position = (msg.pose.pose.position.x, msg.pose.pose.position.y)
+            self.last_speed = math.hypot(msg.twist.twist.linear.x, msg.twist.twist.linear.y)
+            q = msg.pose.pose.orientation
+            self.last_yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                                       1.0 - 2.0 * (q.y * q.y + q.z * q.z))
             if self.phase != Phase.RACING or self.sim_time is None:
                 return
-            speed = math.hypot(msg.twist.twist.linear.x, msg.twist.twist.linear.y)
+            speed = self.last_speed
             for event in self.session.update(
                     self.sim_time, self.last_position[0], self.last_position[1], speed):
                 self.get_logger().info(event)

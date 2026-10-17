@@ -66,7 +66,7 @@ class Driver(Node):
         self.max_range = self.get_parameter('max_range').value
 
         """ver3"""
-        self.path = np.loadtxt('/hackathon/maps/icra26_centerline.csv',delimiter=",",comments="#")
+        self.path = np.loadtxt('maps/icra26_f1_collision_adjusted_xy.csv',delimiter=",",comments="#")
 
         """testing done here"""
         self.declare_parameter('look_ahead',0.9)
