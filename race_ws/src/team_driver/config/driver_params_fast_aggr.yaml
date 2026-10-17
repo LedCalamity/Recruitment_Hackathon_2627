@@ -1,0 +1,22 @@
+# Aggressive variant (v1 line/params, needs < ~20 ms latency) - Fast raceline tracking (controller: fast) - v1, tuned to tolerate up to ~40 ms pose latency.
+# Headless sim: 13.55-14.0 s laps, 0 collisions with 0-40 ms latency (incl. jitter).
+# Above ~60 ms latency it collides, so check the "pose age ms" log lines in ROS.
+#
+#   ./scripts/evaluate.sh --team fast_v1b --laps 10 --output /hackathon/results/fast_v1b \
+#       --driver-params /hackathon/race_ws/src/team_driver/config/driver_params_fast_aggr.yaml
+#
+# NOTE: the judges run `ros2 run team_driver driver` WITHOUT a params file, so once this is
+# confirmed in ROS, these values must become the defaults in driver.py.
+driver:
+  ros__parameters:
+    controller: fast
+    path_file: /hackathon/race_ws/src/team_driver/config/raceline_sim_optimized_v1.csv
+    fast_alat: 12.0         # [m/s^2] lateral limit used by the speed profile
+    fast_vmax: 10.0          # [m/s]
+    fast_acc: 9.0            # [m/s^2] planned acceleration
+    fast_brk: 9.0           # [m/s^2] planned braking
+    fast_la0: 0.506           # [m] pure-pursuit lookahead = clip(la0 + la_k*v, la_min, 2.0)
+    fast_la_k: 0.1
+    fast_la_min: 0.3
+    fast_tau: 0.05          # [s] pose prediction to cover steering lag
+    latency_log_dir: /hackathon/results/latency

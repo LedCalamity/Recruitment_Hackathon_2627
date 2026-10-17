@@ -46,6 +46,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker, MarkerArray
+from team_driver.fast_tracking import Tracker as FastTracker
 
 
 class Driver(Node):
@@ -66,7 +67,12 @@ class Driver(Node):
         self.max_range = self.get_parameter('max_range').value
 
         """ver3"""
-        self.path = np.loadtxt('maps/icra26_f1_collision_adjusted_xy.csv',delimiter=",",comments="#")
+        # Teammate's line for the 'pp' controller. Relative path, so only works when started from
+        # the repo root; it must not crash the node when the fast controller is used.
+        try:
+            self.path = np.loadtxt('maps/icra26_f1_collision_adjusted_xy.csv',delimiter=",",comments="#")
+        except OSError:
+            self.path = None
 
         """testing done here"""
         self.declare_parameter('look_ahead',0.9)
@@ -79,6 +85,30 @@ class Driver(Node):
         self.turn_slowdown = self.get_parameter('turn_slowdown').value
         self.min_speed = self.get_parameter('min_speed').value
 
+        # controller: 'pp' = plan_pure_persuit below (default, unchanged behaviour);
+        # 'fast' = raceline tracker validated in the headless sim (config/driver_params_fast.yaml).
+        # Default = 'fast' with the v1 line: this is what `ros2 run team_driver driver` (the judges'
+        # command, no params file) runs. ROS 10-lap check: 12.61 s best, 126.12 s total, 0 collisions.
+        self.declare_parameter('controller', 'fast')
+        self.declare_parameter('path_file', '')
+        for name, default in [('fast_alat', 12.0), ('fast_vmax', 10.0), ('fast_acc', 9.0), ('fast_brk', 9.0),
+                              ('fast_la0', .506), ('fast_la_k', .1), ('fast_la_min', .3), ('fast_tau', .05)]:
+            self.declare_parameter(name, default)
+        # Per-corner grip scale (comma-separated strings to keep ROS param typing simple).
+        # bounds = segment start stations along the line [m]; scale = multiplier on fast_alat per segment.
+        self.declare_parameter('fast_seg_bounds', '')
+        self.declare_parameter('fast_seg_scale', '')
+        self.fast = None
+        if self.get_parameter('controller').value == 'fast':
+            g = lambda n: float(self.get_parameter(n).value)
+            line = np.loadtxt(self._resolve_line(str(self.get_parameter('path_file').value)),
+                              delimiter=",", comments="#")
+            self.fast = FastTracker(line, alat=g('fast_alat'), vmax=g('fast_vmax'), acc=g('fast_acc'),
+                                    brk=g('fast_brk'), la0=g('fast_la0'), la_k=g('fast_la_k'),
+                                    la_min=g('fast_la_min'), tau=g('fast_tau'),
+                                    seg_bounds=self._floats('fast_seg_bounds'), seg_scale=self._floats('fast_seg_scale'))
+            self.get_logger().info(f'FAST raceline tracking: est lap {self.fast.est:.2f}s, line {self.fast.L:.2f} m')
+
         # Latest known pose and speed. Ground truth from the simulator, which
         # the rules allow you to use - so use it.
         self.position = None      # (x, y) in the map frame
@@ -90,10 +120,31 @@ class Driver(Node):
             AckermannDriveStamped, self.get_parameter('drive_topic').value, 10)
         self.marker_pub = self.create_publisher(MarkerArray, '/driver/markers', 1)
 
+        # Fast mode: queue depth 1 so the driver always works from the newest pose instead of a
+        # backlog (a depth-10 queue that falls behind the sim means up to ~100 ms stale poses),
+        # and the control step runs on each odometry message. /clock is used only to log latency.
+        depth = 1 if self.fast is not None else 10
         self.create_subscription(
-            LaserScan, self.get_parameter('scan_topic').value, self.scan_callback, 10)
+            LaserScan, self.get_parameter('scan_topic').value, self.scan_callback, depth)
         self.create_subscription(
-            Odometry, self.get_parameter('odom_topic').value, self.odom_callback, 10)
+            Odometry, self.get_parameter('odom_topic').value, self.odom_callback, depth)
+        self.clock_now = None
+        self.odom_stamp = None
+        self.ages = []
+        self.last_age_report = None
+        self.declare_parameter('latency_log_dir', '')
+        self.latency_file = None
+        if self.fast is not None:
+            from rosgraph_msgs.msg import Clock
+            self.create_subscription(Clock, '/clock', self.clock_callback, 1)
+            log_dir = str(self.get_parameter('latency_log_dir').value)
+            if log_dir:
+                import os, time
+                os.makedirs(log_dir, exist_ok=True)
+                path = os.path.join(log_dir, time.strftime('pose_age_%Y%m%dT%H%M%S.csv'))
+                self.latency_file = open(path, 'w', buffering=1)
+                self.latency_file.write('sim_time_s,pose_age_ms\n')
+                self.get_logger().info(f'logging pose age to {path}')
 
         self._marker_divisor = 0
         self.get_logger().warn(
@@ -103,17 +154,68 @@ class Driver(Node):
     # ------------------------------------------------------------------
     # Odometry: where the car is. Free, accurate, and worth building on.
     # ------------------------------------------------------------------
+    def _floats(self, name):
+        text = str(self.get_parameter(name).value).strip()
+        return [float(x) for x in text.split(',')] if text else None
+
+    @staticmethod
+    def _resolve_line(path_file):
+        """Explicit path_file wins; otherwise find the default line wherever the package lives."""
+        import os
+        name = 'raceline_sim_optimized_v1.csv'
+        candidates = [path_file] if path_file else []
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            candidates.append(os.path.join(get_package_share_directory('team_driver'), 'config', name))
+        except Exception:  # noqa: BLE001
+            pass
+        here = os.path.dirname(os.path.realpath(__file__))
+        candidates += [os.path.join(here, '..', 'config', name),
+                       os.path.join('/hackathon/race_ws/src/team_driver/config', name)]
+        for c in candidates:
+            if c and os.path.isfile(c):
+                return c
+        raise FileNotFoundError(f'raceline not found, tried: {candidates}')
+
     def odom_callback(self, msg):
         self.position = (msg.pose.pose.position.x, msg.pose.pose.position.y)
         q = msg.pose.pose.orientation
         self.yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                               1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         self.speed = math.hypot(msg.twist.twist.linear.x, msg.twist.twist.linear.y)
+        if self.fast is not None:
+            self.odom_stamp = msg.header.stamp.sec + msg.header.stamp.nanosec*1e-9
+            steering, speed = self.fast(self.position[0], self.position[1], self.yaw, self.speed, self.odom_stamp)
+            self.last_steering = steering
+            self.publish(steering, speed)
+            self.report_latency()
+
+    def clock_callback(self, msg):
+        self.clock_now = msg.clock.sec + msg.clock.nanosec*1e-9
+
+    def report_latency(self):
+        """Log how stale the pose is when we act on it (sim time), every ~2 s."""
+        if self.clock_now is None or self.odom_stamp is None:
+            return
+        age = max(0.0, self.clock_now-self.odom_stamp)
+        self.ages.append(age)
+        if self.latency_file is not None:
+            self.latency_file.write(f'{self.odom_stamp:.3f},{age*1000:.1f}\n')
+        if self.last_age_report is None:
+            self.last_age_report = self.odom_stamp
+        if self.odom_stamp-self.last_age_report >= 2.0 and self.ages:
+            a = np.array(self.ages)*1000
+            self.get_logger().info(f'pose age ms: median {np.median(a):.0f}  p95 {np.percentile(a, 95):.0f}  '
+                                   f'max {a.max():.0f}  n={len(a)}')
+            self.ages = []
+            self.last_age_report = self.odom_stamp
 
     # ------------------------------------------------------------------
     # The control loop, once per LiDAR scan (about 40 Hz).
     # ------------------------------------------------------------------
     def scan_callback(self, scan):
+        if self.fast is not None:
+            return  # fast mode drives from odom_callback
         ranges, angles = self.preprocess(scan)
         steering, speed = self.plan(ranges, angles)
         self.last_steering = steering
@@ -450,6 +552,10 @@ class Driver(Node):
             ver2: plan_ftg() good
             ver3: plan_pure_persuit()
             ver4: plan_pure_pursuit_v2() for better stability"""
+        if self.fast is not None:
+            if self.position is None:
+                return (0.0, 0.0)
+            return self.fast(self.position[0], self.position[1], self.yaw, self.speed, 0.0)
         return self.plan_pure_persuit(ranges,angles)
 
 

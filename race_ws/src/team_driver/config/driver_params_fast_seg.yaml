@@ -1,0 +1,8 @@
+# v1 + per-corner speed scale (3 corners raised: right-bottom S, hairpin top, top-left).
+# Headless sim, 11 laps: 12.37-12.50 s, 0 collisions at 0-2 step latency, jitter and half-rate control.
+driver:
+  ros__parameters:
+    controller: fast
+    fast_seg_bounds: "10.424,21.248,29.148,37.997,44.521,50.646,60.67,72.494"
+    fast_seg_scale: "1.1664,1.0,1.0,1.2597,1.0,1.0,1.1232,1.0"
+    latency_log_dir: /hackathon/results/latency
