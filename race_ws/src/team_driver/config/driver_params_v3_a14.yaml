@@ -1,0 +1,8 @@
+# v3 line (body margin 0.20 m, ~10 cm more clearance than v1 at the tightest spots), alat=14.
+# Headless sim, 11 laps, 0 collisions at 0-2 step latency, jitter and half-rate control.
+driver:
+  ros__parameters:
+    controller: fast
+    path_file: /hackathon/race_ws/src/team_driver/config/raceline_sim_optimized_v3.csv
+    fast_alat: 14.0
+    latency_log_dir: /hackathon/results/latency
