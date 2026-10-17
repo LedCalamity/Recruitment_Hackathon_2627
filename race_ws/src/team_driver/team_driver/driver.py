@@ -100,6 +100,8 @@ class Driver(Node):
         # Default: right-side approach (s 22-29 m) at alat 15, both hairpins at 0.85 x 16 = 13.6.
         self.declare_parameter('fast_seg_bounds', '0.0,22.0,29.0,37.5,44.3')
         self.declare_parameter('fast_seg_scale', '1.0,0.9375,0.85,0.85,1.0')
+        # Out lap + warm-up lap are not timed: drive them at fast_warm_scale x grip (1.0 = off).
+        self.declare_parameter('fast_warm_scale', 0.8)
         self.fast = None
         if self.get_parameter('controller').value == 'fast':
             g = lambda n: float(self.get_parameter(n).value)
@@ -108,7 +110,8 @@ class Driver(Node):
             self.fast = FastTracker(line, alat=g('fast_alat'), vmax=g('fast_vmax'), acc=g('fast_acc'),
                                     brk=g('fast_brk'), la0=g('fast_la0'), la_k=g('fast_la_k'),
                                     la_min=g('fast_la_min'), tau=g('fast_tau'),
-                                    seg_bounds=self._floats('fast_seg_bounds'), seg_scale=self._floats('fast_seg_scale'))
+                                    seg_bounds=self._floats('fast_seg_bounds'), seg_scale=self._floats('fast_seg_scale'),
+                                    warm_scale=g('fast_warm_scale'))
             self.get_logger().info(f'FAST raceline tracking: est lap {self.fast.est:.2f}s, line {self.fast.L:.2f} m')
 
         # Latest known pose and speed. Ground truth from the simulator, which

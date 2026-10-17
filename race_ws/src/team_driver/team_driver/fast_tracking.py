@@ -3,7 +3,9 @@
 Speed profile from line curvature (optionally per-corner grip scale), pure pursuit on base_link (rear axle),
 pose predicted tau s ahead, smooth merge from the grid slot, acceleration-type speed command for the
 sim's P speed loop (accelerating kp 4.755, braking kp 19.02). Re-acquires the line (global search +
-new merge) whenever the car is >0.5 m from the expected point, e.g. a stale first pose or a reset."""
+new merge) whenever the car is >0.5 m from the expected point, e.g. a stale first pose or a reset.
+Out lap + warm-up lap (not timed) run on a gentler profile (alat x warm_scale); full speed from
+warm_end_before metres before the line that starts timed lap 1."""
 import math, numpy as np
 from scipy.interpolate import CubicSpline
 WB = 0.33; SMAX = 0.4189; G = 9.81
@@ -45,7 +47,7 @@ def lap_time_est(L, v):
 
 class Tracker:
     def __init__(self, xy, vmax=8.0, alat=8.0, acc=6.0, brk=7.0, la0=0.35, la_k=0.18, la_min=0.4, la_max=2.0,
-                 mode='pp', v_lead=0.15, k_smooth=5, k_lat=1.5, k_head=1.0, acc_cmd=True, horizon=0.12, tau=0.0, a_lim=9.5, merge_len=6.0, ff_preview=0.05, v0=1.0, yaw_pred=0.0, ellipse=True, seg_bounds=None, seg_scale=None, kus=0.00279, use_beta=False, k_int=0.0, int_lim=0.3):
+                 mode='pp', v_lead=0.15, k_smooth=5, k_lat=1.5, k_head=1.0, acc_cmd=True, horizon=0.12, tau=0.0, a_lim=9.5, merge_len=6.0, ff_preview=0.05, v0=1.0, yaw_pred=0.0, ellipse=True, seg_bounds=None, seg_scale=None, kus=0.00279, use_beta=False, k_int=0.0, int_lim=0.3, recover=False, rate_lim=0.0, warm_scale=1.0, finish_xy=(1.32, 0.0), warm_end_before=5.0):
         self.s, self.p, self.t, k, self.L = spline_closed(xy)
         self.k = smooth_periodic(k, k_smooth)
         a_arr = np.full(len(self.s), float(alat))
@@ -53,7 +55,18 @@ class Tracker:
             # seg_bounds: sorted segment start stations [m]; segment i runs to bound i+1 (last wraps to first)
             idx = (np.searchsorted(np.asarray(seg_bounds), self.s, side='right')-1) % len(seg_bounds)
             a_arr = a_arr*np.asarray(seg_scale, float)[idx]
-        self.v = speed_profile(self.s, self.k, self.L, vmax, a_arr, acc, brk, ellipse)
+        vcap = np.full(len(self.s), float(vmax))
+        if rate_lim:
+            # Steering-rate limit (3.2 rad/s actuator): |d delta/ds| * v <= rate_lim
+            dd = np.abs(np.gradient(np.arctan(WB*self.k), self.L/len(self.s)))
+            dd = smooth_periodic(dd, 9)
+            vcap = np.minimum(vcap, rate_lim/np.maximum(dd, 1e-6))
+        self.v = speed_profile(self.s, self.k, self.L, vcap, a_arr, acc, brk, ellipse)
+        # Out lap + warm-up lap are not timed (collisions still count): drive them on a gentler profile.
+        self.warm_scale = warm_scale
+        self.v_warm = speed_profile(self.s, self.k, self.L, vcap, a_arr*warm_scale, acc, brk, ellipse) if warm_scale < 1 else self.v
+        jf = int(np.argmin(np.hypot(self.p[:, 0]-finish_xy[0], self.p[:, 1]-finish_xy[1])))
+        self.finish_idx = jf; self.warm_end = None; self.progress = 0.0; self.warm_end_before = warm_end_before
         self.n = len(self.s); self.ds = self.L/self.n
         self.la0, self.la_k, self.la_min, self.la_max = la0, la_k, la_min, la_max
         self.mode = mode; self.v_lead = v_lead; self.k_lat = k_lat; self.k_head = k_head
@@ -62,6 +75,7 @@ class Tracker:
         self.nrm = np.c_[-self.t[:, 1], self.t[:, 0]]
         self.last_st = 0.0; self.yaw_pred = yaw_pred; self.kus = kus
         self.use_beta = use_beta; self.beta = 0.0; self.k_int = k_int; self.int_lim = int_lim; self.eint = 0.0; self.prev_t = None
+        self.recover = recover; self.moved = False; self.stuck_since = None; self.reverse_until = None
         self.idx = None
         self.est = lap_time_est(self.L, self.v)
 
@@ -70,14 +84,34 @@ class Tracker:
             w = np.arange(self.idx-20, self.idx+80) % self.n
             d = np.hypot(self.p[w, 0]-x, self.p[w, 1]-y); j = int(np.argmin(d))
             if d[j] < 0.5:
+                step = (int(w[j])-self.idx) % self.n
+                if step < self.n//2: self.progress += step*self.ds
                 self.idx = int(w[j]); return self.idx
         # First call, or the car is far from where we thought (teleport / reset to the grid /
         # stale first pose): search the whole line and redo the smooth merge from here.
         d = np.hypot(self.p[:, 0]-x, self.p[:, 1]-y); self.idx = int(np.argmin(d))
         self.merge = None
+        if self.warm_end is None:
+            to_line = ((self.finish_idx-self.idx) % self.n)*self.ds
+            self.warm_end = to_line+self.L-self.warm_end_before
         return self.idx
 
     def __call__(self, x, y, yaw, v, t):
+        # Stuck recovery: after a hit the car can end up pinned against a wall/cone while we keep asking
+        # for speed; the referee then adds a collision every second -> DQ. Back off briefly instead.
+        if self.recover:
+            if v > 2.0: self.moved = True
+            if self.reverse_until is not None:
+                if t < self.reverse_until:
+                    return -self.last_st, -1.5
+                self.reverse_until = None; self.idx = None; self.merge = None; self.stuck_since = None
+            if self.moved and v < 0.3:
+                if self.stuck_since is None: self.stuck_since = t
+                elif t-self.stuck_since > 0.3:
+                    self.reverse_until = t+0.6
+                    return -self.last_st, -1.5
+            else:
+                self.stuck_since = None
         i = self.nearest(x, y)
         if self.tau > 0:  # predict pose forward (kinematic bicycle, last steering) to cover latency + steering lag
             w = v*math.tan(self.last_st)/WB*self.yaw_pred
@@ -135,20 +169,21 @@ class Tracker:
             jp = (jf+int(round(self.ff_preview*v/self.ds))) % self.n
             st = math.atan(WB*self.k[jp]) + self.k_head*he - math.atan2(self.k_lat*ex, self.v0+v)
         st = float(np.clip(st, -SMAX, SMAX)); self.last_st = st
+        vprof = self.v_warm if (self.warm_end is not None and self.progress < self.warm_end) else self.v
         if not self.acc_cmd:
             jv = (i+int(round(self.v_lead*max(v, 1)/self.ds))) % self.n
-            return st, float(self.v[jv])
+            return st, float(vprof[jv])
         if self.acc_cmd == 'ff':
             # Latency-tolerant: feedforward from the profile only (no measured speed in the loop).
             # cmd = v_ref + a_ref/kp so the sim's P speed loop produces the planned acceleration.
             jv = (i+max(1, int(round(self.v_lead*max(v, 1)/self.ds)))) % self.n
-            vr = float(self.v[jv]); vn = float(self.v[(jv+1) % self.n])
+            vr = float(vprof[jv]); vn = float(vprof[(jv+1) % self.n])
             a = float(np.clip((vn*vn-vr*vr)/(2*self.ds), -self.a_lim, self.a_lim))
             return st, vr + (a/4.755 if a > 0 else a/19.02)
         # speed P controller in sim: accel kp=4.755 (accelerating) / 19.02 (braking).
         # Command the speed that yields the profile's acceleration over a short horizon.
         d = max(v*self.horizon, 0.1); jv = (i+max(1, int(round(d/self.ds)))) % self.n
-        vt = float(self.v[jv]); a = (vt*vt-v*v)/(2*d)
+        vt = float(vprof[jv]); a = (vt*vt-v*v)/(2*d)
         a = float(np.clip(a, -self.a_lim, self.a_lim))
         cmd = v + (a/4.755 if a > 0 else a/19.02)
         if v < 0.5: cmd = max(cmd, vt)
