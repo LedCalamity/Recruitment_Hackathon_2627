@@ -6,3 +6,5 @@ driver:
     path_file: /hackathon/race_ws/src/team_driver/config/raceline_sim_optimized_v3.csv
     fast_alat: 14.0
     latency_log_dir: /hackathon/results/latency
+    fast_seg_bounds: ""
+    fast_seg_scale: ""

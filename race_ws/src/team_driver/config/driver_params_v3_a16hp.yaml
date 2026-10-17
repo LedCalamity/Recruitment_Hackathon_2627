@@ -1,0 +1,9 @@
+# v3 line, fast_alat 16 everywhere except the two hairpins (x0.85 -> effective 13.6, slower than the
+# current default there). Headless sim: ~0.1 s/lap faster than alat 15, same robustness profile.
+driver:
+  ros__parameters:
+    controller: fast
+    fast_alat: 16.0
+    fast_seg_bounds: "0.0,29.0,37.5,44.3"
+    fast_seg_scale: "1.0,0.85,0.85,1.0"
+    latency_log_dir: /hackathon/results/latency

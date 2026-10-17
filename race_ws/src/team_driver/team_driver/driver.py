@@ -87,18 +87,19 @@ class Driver(Node):
 
         # controller: 'pp' = plan_pure_persuit below (default, unchanged behaviour);
         # 'fast' = raceline tracker validated in the headless sim (config/driver_params_fast.yaml).
-        # Default = 'fast' with the v3 line (0.20 m body margin) and fast_alat 15: this is what
-        # `ros2 run team_driver driver` (the judges' command, no params file) runs.
-        # ROS 10-lap checks: 12.088 s best, 120.90 s total, 0 collisions in 3/3 runs.
+        # Default = 'fast' with the v3 line (0.20 m body margin), fast_alat 16 with slower hairpins and
+        # right-side approach: this is what `ros2 run team_driver driver` (the judges' command) runs.
+        # ROS headless 10-lap checks: 12.013-12.019 s best, 120.20 s total, 8/9 runs clean.
         self.declare_parameter('controller', 'fast')
         self.declare_parameter('path_file', '')
-        for name, default in [('fast_alat', 15.0), ('fast_vmax', 10.0), ('fast_acc', 9.0), ('fast_brk', 9.0),
+        for name, default in [('fast_alat', 16.0), ('fast_vmax', 10.0), ('fast_acc', 9.0), ('fast_brk', 9.0),
                               ('fast_la0', .506), ('fast_la_k', .1), ('fast_la_min', .3), ('fast_tau', .05)]:
             self.declare_parameter(name, default)
         # Per-corner grip scale (comma-separated strings to keep ROS param typing simple).
         # bounds = segment start stations along the line [m]; scale = multiplier on fast_alat per segment.
-        self.declare_parameter('fast_seg_bounds', '')
-        self.declare_parameter('fast_seg_scale', '')
+        # Default: right-side approach (s 22-29 m) at alat 15, both hairpins at 0.85 x 16 = 13.6.
+        self.declare_parameter('fast_seg_bounds', '0.0,22.0,29.0,37.5,44.3')
+        self.declare_parameter('fast_seg_scale', '1.0,0.9375,0.85,0.85,1.0')
         self.fast = None
         if self.get_parameter('controller').value == 'fast':
             g = lambda n: float(self.get_parameter(n).value)

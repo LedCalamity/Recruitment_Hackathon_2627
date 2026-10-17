@@ -20,3 +20,5 @@ driver:
     fast_la_min: 0.68
     fast_tau: 0.031          # [s] pose prediction to cover steering lag
     latency_log_dir: /hackathon/results/latency
+    fast_seg_bounds: ""
+    fast_seg_scale: ""

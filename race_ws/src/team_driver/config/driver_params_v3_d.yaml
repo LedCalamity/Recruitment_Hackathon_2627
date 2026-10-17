@@ -1,0 +1,9 @@
+# Option D: v3 line, fast_alat 16, with the right-side approach (s 22-29 m, wall at (7.7, 9.2)) at x0.9375
+# (= alat 15 there) and both hairpins at x0.85 (= 13.6, slower than the alat-15 default there).
+driver:
+  ros__parameters:
+    controller: fast
+    fast_alat: 16.0
+    fast_seg_bounds: "0.0,22.0,29.0,37.5,44.3"
+    fast_seg_scale: "1.0,0.9375,0.85,0.85,1.0"
+    latency_log_dir: /hackathon/results/latency
