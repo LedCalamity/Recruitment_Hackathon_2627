@@ -70,7 +70,9 @@ class Driver(Node):
         # Teammate's line for the 'pp' controller. Relative path, so only works when started from
         # the repo root; it must not crash the node when the fast controller is used.
         try:
-            self.path = np.loadtxt('maps/icra26_f1_collision_adjusted_xy.csv',delimiter=",",comments="#")
+            import os
+            self.path = np.loadtxt(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'config', 'teammate',
+                                                'icra26_f1_collision_adjusted_xy.csv'), delimiter=",", comments="#")
         except OSError:
             self.path = None
 
