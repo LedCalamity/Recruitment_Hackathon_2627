@@ -1,0 +1,111 @@
+{
+  "schema_version": 2,
+  "referee_version": "1.0.0",
+  "team": "clean_latest_339a505",
+  "run_id": "20261018T084528Z",
+  "track": "icra26",
+  "map_path": "/hackathon/maps/icra26",
+  "finished_at_utc": "2026-10-18T08:46:33+00:00",
+  "environment": {
+    "real_time_factor": 2.771,
+    "wall_duration_s": 51.57,
+    "sim_duration_s": 142.87,
+    "callback_errors": 0
+  },
+  "status": "COMPLETE",
+  "reason": "all timed laps completed",
+  "scored": true,
+  "rules": {
+    "warmup_laps": 1,
+    "timed_laps": 10,
+    "collision_penalty_s": 10.0,
+    "max_collisions": 10,
+    "collision_interval_s": 1.0,
+    "min_lap_time_s": 2.0,
+    "session_timeout_s": 900.0,
+    "stuck_speed_mps": 0.05,
+    "stuck_timeout_s": 15.0
+  },
+  "laps_completed": 10,
+  "laps_required": 10,
+  "collisions": 0,
+  "collision_limit": 10,
+  "best_lap_time": 12.02,
+  "best_lap_time_raw": 12.02,
+  "best_lap_number": 6,
+  "total_time": 120.2081,
+  "total_time_raw": 120.2081,
+  "total_penalty_s": 0.0,
+  "laps": [
+    {
+      "number": 1,
+      "raw_time": 12.0205,
+      "collisions": 0,
+      "penalty_s": 0.0,
+      "net_time": 12.0205
+    },
+    {
+      "number": 2,
+      "raw_time": 12.0253,
+      "collisions": 0,
+      "penalty_s": 0.0,
+      "net_time": 12.0253
+    },
+    {
+      "number": 3,
+      "raw_time": 12.02,
+      "collisions": 0,
+      "penalty_s": 0.0,
+      "net_time": 12.02
+    },
+    {
+      "number": 4,
+      "raw_time": 12.0201,
+      "collisions": 0,
+      "penalty_s": 0.0,
+      "net_time": 12.0201
+    },
+    {
+      "number": 5,
+      "raw_time": 12.0222,
+      "collisions": 0,
+      "penalty_s": 0.0,
+      "net_time": 12.0222
+    },
+    {
+      "number": 6,
+      "raw_time": 12.02,
+      "collisions": 0,
+      "penalty_s": 0.0,
+      "net_time": 12.02
+    },
+    {
+      "number": 7,
+      "raw_time": 12.02,
+      "collisions": 0,
+      "penalty_s": 0.0,
+      "net_time": 12.02
+    },
+    {
+      "number": 8,
+      "raw_time": 12.02,
+      "collisions": 0,
+      "penalty_s": 0.0,
+      "net_time": 12.02
+    },
+    {
+      "number": 9,
+      "raw_time": 12.02,
+      "collisions": 0,
+      "penalty_s": 0.0,
+      "net_time": 12.02
+    },
+    {
+      "number": 10,
+      "raw_time": 12.02,
+      "collisions": 0,
+      "penalty_s": 0.0,
+      "net_time": 12.02
+    }
+  ]
+}
