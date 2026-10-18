@@ -51,6 +51,8 @@ On the x86-64 machine where the shipped file was generated, the output is identi
 
 The four generator parameters (margin 0.20 m, length weight 0.8, maximum offset 2.5 m, coarse stride 6) were chosen by generating candidates and comparing them in simulation for lap time and robustness to control delay.
 
+Only `raceline_sim_optimized_v3.csv` is loaded by the default configuration. `raceline_sim_optimized_v1.csv` and `_v2.csv` are earlier candidate lines from our experiments, kept for comparison, and `config/teammate/` holds the lines used by an earlier pure pursuit prototype; none of them is used in the judged run.
+
 We also tested combinations of controller parameters, including the lateral acceleration limit, per-segment speed scales, the warm-up speed scale, the lookahead distance and the pose prediction time, and selected the final configuration based on lap times and collision counts. The chosen values are stored in the driver defaults and configuration files. During evaluation, the driver uses this configuration at startup.
 
 ## Dependencies we added

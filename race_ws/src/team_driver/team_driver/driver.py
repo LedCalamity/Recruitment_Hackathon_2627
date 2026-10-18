@@ -157,9 +157,9 @@ class Driver(Node):
                 self.get_logger().info(f'logging pose age to {path}')
 
         self._marker_divisor = 0
-        self.get_logger().warn(
-            'team_driver is up, but this template has no driving logic: it will '
-            'crawl straight ahead until it hits something. Implement plan().')
+        self.get_logger().info(
+            'team_driver is up: ' + ('fast racing-line tracker (odometry-driven, no LiDAR)'
+                                     if self.fast is not None else 'LiDAR controller'))
 
     # ------------------------------------------------------------------
     # Odometry: where the car is. Free, accurate, and worth building on.
