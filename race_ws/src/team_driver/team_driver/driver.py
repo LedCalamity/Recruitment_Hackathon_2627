@@ -131,8 +131,11 @@ class Driver(Node):
         # backlog (a depth-10 queue that falls behind the sim means up to ~100 ms stale poses),
         # and the control step runs on each odometry message. /clock is used only to log latency.
         depth = 1 if self.fast is not None else 10
-        self.create_subscription(
-            LaserScan, self.get_parameter('scan_topic').value, self.scan_callback, depth)
+        # Fast mode drives from odometry only: skip the 819-beam scan (deserialising it at ~100 Hz is
+        # the driver's biggest CPU cost, and a busy driver is a late driver).
+        if self.fast is None:
+            self.create_subscription(
+                LaserScan, self.get_parameter('scan_topic').value, self.scan_callback, depth)
         self.create_subscription(
             Odometry, self.get_parameter('odom_topic').value, self.odom_callback, depth)
         self.clock_now = None
@@ -142,10 +145,10 @@ class Driver(Node):
         self.declare_parameter('latency_log_dir', '')
         self.latency_file = None
         if self.fast is not None:
-            from rosgraph_msgs.msg import Clock
-            self.create_subscription(Clock, '/clock', self.clock_callback, 1)
             log_dir = str(self.get_parameter('latency_log_dir').value)
-            if log_dir:
+            if log_dir:  # /clock is only needed for the optional latency log
+                from rosgraph_msgs.msg import Clock
+                self.create_subscription(Clock, '/clock', self.clock_callback, 1)
                 import os, time
                 os.makedirs(log_dir, exist_ok=True)
                 path = os.path.join(log_dir, time.strftime('pose_age_%Y%m%dT%H%M%S.csv'))

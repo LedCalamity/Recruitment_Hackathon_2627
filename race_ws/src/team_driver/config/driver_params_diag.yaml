@@ -1,0 +1,9 @@
+# Default driver settings + a per-step timing log (diagnostics only; changes nothing in the driving).
+# Writes results/latency/pose_age_*.csv: sim_time_s, pose_age_ms. Gaps > 10 ms between consecutive
+# sim_time_s rows are steps where the driver missed odometry, i.e. the car drove on a stale command.
+#
+#   ./scripts/evaluate.sh --team diag --laps 10 --headless --runs 3 --output /hackathon/results/diag \
+#       --driver-params /hackathon/race_ws/src/team_driver/config/driver_params_diag.yaml
+driver:
+  ros__parameters:
+    latency_log_dir: /hackathon/results/latency
